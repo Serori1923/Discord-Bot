@@ -1,0 +1,14 @@
+{
+    "Default":{
+        "url":"null",
+        "vCodec":"h264",
+        "vQuality":"1080",
+        "aFormat":"mp3",
+        "filenamePattern":"basic",
+        "isAudioOnly":false,
+        "isNoTTWatermark":true,
+        "isTTFullAudio":false,
+        "isAudioMuted":false,
+        "twitterGif":true
+    }
+}
