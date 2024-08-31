@@ -14,18 +14,17 @@ class Admin(commands.Cog):
     @app_commands.command(description='清除訊息 (Admin only)')
     @commands.has_any_role('Server Admin')
     async def clear(self, interaction, num:int):
-        await interaction.channel.purge(limit=int(num))
-        # await interaction.response.send_message('喵嗚 喵!', ephemeral=True)
+        await interaction.channel.purge(limit=num)
         journal(interaction.user , 'Messages cleared')                                    #在後台紀錄發生事件
 
-    @app_commands.command(description='把壞人趕走 (Admin only)')#, guild=discord.Object(id=serverID[0]))
+    @app_commands.command(description='把壞人趕走 (Admin only)')
     @commands.has_any_role('Server Admin')
     async def kick(self, interaction, member : discord.Member, *,reason:str=""):
         await member.kick(reason=reason)
         await interaction.response.send_message('小菜一碟啦喵')
 
 
-    @app_commands.command(description='把壞人關進籠子裡 (Admin only)')#, guild=discord.Object(id=serverID[0]))
+    @app_commands.command(description='把壞人關進籠子裡 (Admin only)')
     @commands.has_any_role('Server Admin')
     async def ban(self, interaction,member : discord.Member, *,reason:str=""):
         await member.ban(reason=reason)
