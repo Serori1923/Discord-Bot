@@ -19,7 +19,7 @@ class QRCode(commands.Cog):
 
     @app_commands.command(description='製作一個獨一無二的QRcode')
     @app_commands.describe(url = "要放入QRCode的內容", image_url = "要自訂的圖片或是GIF連結")
-    async def qr(self, interaction, url:str, image_url:str=None):
+    async def create_qr(self, interaction, url:str, image_url:str=None):
         await interaction.response.send_message(embed=wait_embed)
         ydl_embed = await interaction.original_response()
         qrcode = segno.make_qr(url, error='h') #寫入內容
@@ -30,7 +30,7 @@ class QRCode(commands.Cog):
 
         if image_url != None:
             try:
-                if(image_url.endswith("gif")):
+                if "gif" in image_url:
                     type = "gif"
                 req = urllib.request.Request(image_url, headers={'User-Agent' : "User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.95 Safari/537.36"}) 
                 image_url = urllib.request.urlopen(req) #讀取圖片內容
