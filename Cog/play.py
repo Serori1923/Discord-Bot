@@ -3,7 +3,7 @@ from discord import app_commands
 from discord.ext import commands
 from discord import FFmpegPCMAudio
 from discord.utils import get
-from discord.ui import Select, View
+from discord.ui import Button, View
 import asyncio
 from yt_dlp import YoutubeDL
 import time
@@ -15,16 +15,16 @@ ydl_wait_embed = discord.Embed(title="喵喵喵~ 請稍等一下喔~~~" , color=
 ydl_embed = ydl_wait_embed
 playing_embed = discord.Embed(title="好啦 就是工具貓啦 幫你播就是了" , color=0xffd700)
 pause_embed=discord.Embed(title="播了又要暫停 你真的是麻煩大王欸" , color=0xffd700)
+embed_server = None
 bot_at = 'None'
 ftp=0
-view = View(timeout=None)
-YDL_OPTIONS = {'format': 'm4a/bestaudio/best' , 'noplaylist': 'True'}
+YDL_OPTIONS = {'format': 'm4a/bestaudio/best', 'noplaylist': 'True'}
 FFMPEG_OPTIONS = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 'options': '-vn'}
 
 with open('setting.json', 'r', encoding='utf8') as jsonFile:
     setting = json.load(jsonFile)
 
-def journal(user,event):
+def journal(user, event):
     nowtime = time.strftime('%Y-%m-%d %H:%M:%S |', time.localtime())
     print(f'{nowtime} Requester: {user} | {event}')
 
@@ -49,15 +49,75 @@ def setPauseEmbed(title, url):
     pause_embed.add_field(name="正在播放", value=f"【***[{title}]({url})***】", inline=False)
     return pause_embed
 
+
+
+class MusicControlView(View):
+    def __init__(self, bot):
+        super().__init__(timeout=None)
+        self.bot = bot
+
+    async def process_action(self, interaction: discord.Interaction, action: str):
+        """處理按鈕點擊事件"""
+        global ydl_embed, playing_embed, pause_embed
+
+        if action == "繼續播放":
+            ErrorCode = await resume(interaction, self.bot)
+            if ErrorCode == 0:
+                await ydl_embed.edit(embed=playing_embed)
+                await interaction.response.defer()
+            elif ErrorCode == 1:
+                await interaction.response.send_message("你還沒播放任何東西呢", ephemeral=True)
+            elif ErrorCode == 2:
+                await interaction.response.send_message("已經在播放了喔 沒聽見的話可能要檢查耳朵了(´･_･`)", ephemeral=True)
+            elif ErrorCode == 3:
+                await interaction.response.send_message("不是 我連房間都沒進去，你是想要我繼續播甚麼?", ephemeral=True)
+
+        elif action == "暫停播放":
+            ErrorCode = await pause(interaction, self.bot)
+            if ErrorCode == 0:
+                await ydl_embed.edit(embed=pause_embed)
+                await interaction.response.defer()
+            elif ErrorCode == 1:
+                await interaction.response.send_message("現在沒有在播放喔", ephemeral=True)
+            elif ErrorCode == 3:
+                await interaction.response.send_message("不是 我連房間都沒進去，你是想要我暫停甚麼?", ephemeral=True)
+
+        elif action == "跳下一首":
+            ErrorCode = await next(interaction, self.bot)
+            if ErrorCode == 0:
+                await interaction.response.defer()
+            elif ErrorCode == 1:
+                await interaction.response.send_message("現在沒有在播放喔", ephemeral=True)
+            elif ErrorCode == 3:
+                await interaction.response.send_message("不是 我連房間都沒進去，你是怎麼樣才會覺得我生得出下一首歌?", ephemeral=True)
+            elif ErrorCode == 4:
+                await interaction.response.send_message("已經沒有下一首歌了喵", ephemeral=True)
+
+    @discord.ui.button(label="繼續播放", emoji="▶", style=discord.ButtonStyle.green, custom_id="continue")
+    async def continue_button(self, interaction: discord.Interaction, button: Button):
+        await self.process_action(interaction, "繼續播放")
+
+    @discord.ui.button(label="暫停播放", emoji="⏸", style=discord.ButtonStyle.blurple, custom_id="pause")
+    async def pause_button(self, interaction: discord.Interaction, button: Button):
+        await self.process_action(interaction, "暫停播放")
+
+    @discord.ui.button(label="跳下一首", emoji="⏩", style=discord.ButtonStyle.red, custom_id="skip")
+    async def skip_button(self, interaction: discord.Interaction, button: Button):
+        await self.process_action(interaction, "跳下一首")
+
+
+
 class Play(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # self.bot.tree.on_error = on_tree_error
 
     @app_commands.command(description='播放')
     @app_commands.describe(search = "直接輸入要播放的歌名，或是輸入YT影片連結，或YT Music歌曲連結")
     @app_commands.describe(interrupting = "選擇True立即插播歌曲")
     async def play(self, interaction, search:str, interrupting:bool=False):
 
+        view = MusicControlView(self.bot)
         Mode = 0
         if "youtube.com" in search or "youtu.be" in search:
             Mode = 1
@@ -96,54 +156,10 @@ class Play(commands.Cog):
                 return
 
         try:                                                                        #偵測擷取音訊時是否發生錯誤
-            global ydl_embed, playing_embed, pause_embed, ftp
+            global ydl_embed, playing_embed, pause_embed, ftp, embed_server
             if ftp==0:
                 await interaction.response.send_message(embed=ydl_wait_embed)
                 ydl_embed = await interaction.original_response()
-
-                select = Select(options=[
-                    discord.SelectOption(label="繼續播放", emoji="▶", value="繼續播放"),
-                    discord.SelectOption(label="暫停播放", emoji="⏸", value="暫停播放"),
-                    # discord.SelectOption(label="停止播放", emoji="⏹", value="停止播放"),
-                    discord.SelectOption(label="跳下一首", emoji="⏩", value="跳下一首"),
-                ])
-
-                async def my_callback(interaction): #return 0=運行正常 1=沒有播放中的音樂 2=正在播放中 3=Bot不在語音中 4=播放清單已空
-                    if select.values[0]=="繼續播放": 
-                        ErrorCode = await resume(interaction, self.bot)
-                        if ErrorCode==0:
-                            await ydl_embed.edit(embed=playing_embed)
-                            await interaction.response.defer()
-                        elif ErrorCode==1:
-                            await interaction.response.send_message("你還沒播放任何東西呢", ephemeral=True)
-                        elif ErrorCode==2:
-                            await interaction.response.send_message("已經在播放了喔 沒聽見的話可能要檢查耳朵了(´･_･`)", ephemeral=True)
-                        elif ErrorCode==3:
-                            await interaction.response.send_message("不是 我連房間都沒進去，你是想要我繼續播甚麼?", ephemeral=True)
-
-                    if select.values[0]=="暫停播放":
-                        ErrorCode = await pause(interaction, self.bot)
-                        if ErrorCode==0:
-                            await ydl_embed.edit(embed=pause_embed)
-                            await interaction.response.defer()
-                        elif ErrorCode==1:
-                            await interaction.response.send_message("現在沒有在播放喔", ephemeral=True)
-                        elif ErrorCode==3:
-                            await interaction.response.send_message("不是 我連房間都沒進去，你是想要我暫停甚麼?", ephemeral=True)
-                            
-                    if select.values[0]=="跳下一首":
-                        ErrorCode = await next(interaction, self.bot)
-                        if ErrorCode==0:
-                            await interaction.response.defer()
-                        elif ErrorCode==1:
-                            await interaction.response.send_message("現在沒有在播放喔", ephemeral=True)
-                        elif ErrorCode==3:
-                            await interaction.response.send_message("不是 我連房間都沒進去，你是怎麼樣才會覺得我生得出下一首歌?", ephemeral=True)
-                        elif ErrorCode==4:
-                            await interaction.response.send_message("已經沒有下一首歌了喵", ephemeral=True)
-                
-                select.callback=my_callback
-                view.add_item(select)
 
             else:
                 await interaction.response.defer(ephemeral=True)
@@ -183,32 +199,35 @@ class Play(commands.Cog):
                 else:
                     playlist.append(new_item)
                     writeJData(playlist)
-                    await interaction.followup.send(f"已將歌曲加入至播放清單! 使用**/playlist**查看待播歌曲!")
+                    await interaction.followup.send(f"已將歌曲加入至播放清單!```fix\n{video_title}```\n使用**/playlist**查看待播歌曲!")
                     journal(interaction.user, 'Join Video To Playlist')
 
             else:
-                voice.play(FFmpegPCMAudio(URL, **FFMPEG_OPTIONS), after=lambda e: self.bot.loop.create_task(Videoplay(interaction, self.bot)))
+                voice.play(FFmpegPCMAudio(URL, **FFMPEG_OPTIONS), after=lambda e: self.bot.loop.create_task(Videoplay(interaction, self.bot, view)))
                 voice.is_playing()
 
                 playing_embed=setPlayingEmbed(video_title, video_url)
                 pause_embed=setPauseEmbed(video_title, video_url)
 
                 if ftp==0:
-                    await ydl_embed.edit(embed=playing_embed)
-                    await interaction.channel.send(view=view)
+                    await ydl_embed.edit(embed=playing_embed, view=view)
                     ftp=1
                 else:
-                    try:
-                        await ydl_embed.edit(embed=playing_embed)
-                    except Exception as e:
-                        await interaction.channel.purge(limit=2)
-                        ydl_embed = await interaction.channel.send(embed=playing_embed)
-                        await interaction.channel.send(view=view)
+                    if embed_server != interaction.guild:
+                        ydl_embed = await interaction.channel.send(embed=playing_embed, view=view)
+                    else:
+                        try:
+                            await ydl_embed.edit(embed=playing_embed)
+                        except Exception as e:
+                            ydl_embed = await interaction.channel.send(embed=playing_embed, view=view)
+                            print("send view from play | ftp=1,except")
                     await interaction.followup.send("照你要求的播了喵")
+
+                embed_server = interaction.guild
                 journal(interaction.user, 'Play video')
             
         except Exception as e:                                                      #按發生錯誤之類型提示使用方式
-            print("播放連結錯誤")
+            print('捕捉錯誤資訊: '+ str(e))
             print('-------------------------------------------- \n')
 
             if(str(e) == "Not connected to voice."):
@@ -219,17 +238,16 @@ class Play(commands.Cog):
                 error_embed = discord.Embed(title="出錯了喵 檢查一下連結是否正確吧!" , color=0xffd700)
                 await ydl_embed.edit(embed = error_embed)
             else:
-                error_message = "你輸入的連結有誤(可能是輸入成Youtube外或是搜尋頁面的連結)，請重新輸入正確的「影片連結」"
                 try:
-                    await interaction.followup.send(error_message)
+                    await interaction.followup.send('你輸入的連結有誤(可能是輸入成Youtube外或是搜尋頁面的連結)，請重新輸入正確的「影片連結」')
                 
                 except Exception:
-                    await interaction.response.send_message(error_message)
-
-    @app_commands.command(description='查看播放清單或移除歌曲')
-    @app_commands.describe(delete = "輸入要刪除的歌曲編號")
-    @app_commands.describe(interrupting = "輸入播放清單中下n首要播放的歌的編號即可插播")
-    async def playlist(self, interaction, delete:int=None, interrupting:int=None):
+                    await interaction.response.send_message('你輸入的連結有誤(可能是輸入成Youtube外或是搜尋頁面的連結)，請重新輸入正確的「影片連結」')
+        
+    @app_commands.command(description='查看播放清單、移除歌曲、插播清單中歌曲')
+    @app_commands.describe(delete = "選擇要刪除的歌曲")
+    @app_commands.describe(interrupting = "選擇要插播的歌曲")
+    async def playlist(self, interaction, delete:str=None, interrupting:str=None):
         await interaction.response.defer()
         playlist = openJData()
 
@@ -240,31 +258,27 @@ class Play(commands.Cog):
             PL_embed.add_field(name="餐盤實況 ↓", value="🍽️🍃...", inline=True)
 
         elif interrupting != None:
-            try:
-                cutSong = playlist.pop(interrupting-1)
-                playlist.insert(0, cutSong)
-                writeJData(playlist)
-                await next(interaction, self.bot)
-                await interaction.followup.send("切切切切切成功!")
-                return
-                
-            except Exception:
-                await interaction.followup.send("清單沒這編號捏，要看清楚再切歌喔~", ephemeral=True)
-                return
+            index = await matchPlaylist(interaction, playlist, interrupting)
+            if index == "bad":
+                return 
+            cutSong = playlist.pop(index)
+            playlist.insert(0, cutSong)
+            writeJData(playlist)
+            await next(interaction, self.bot)
+            await interaction.followup.send("切切切切切成功!")
+            return
             
         elif delete != None:
-            try:
-                playlist.pop(delete-1)
-                writeJData(playlist)
-                PL_embed = discord.Embed(title="刪除成功! 目前待播歌曲" , color=0xffd700)
-                if isinstance(playlist, list) and not playlist:
-                    msg = ["\n我們的感情就像這個歌單一樣 沒有任何聯繫 渣男😾","\n放棄本來就會遺憾 但有些事堅持本就沒什麼意義 一定要擁有嗎 或許失去更輕鬆嘛 你先快樂 我的事以後再說😼"]
-                    PL_embed.add_field(name="被你刪光了", value=f"{msg[random.randint(0,1)]}", inline=True)
-                    await interaction.followup.send(embed=PL_embed)
-                    return
-                
-            except Exception:
-                await interaction.followup.send("清單沒這編號捏，要看清楚再刪除喔~")
+            index = await matchPlaylist(interaction, playlist, delete)
+            if index == "bad":
+                return
+            playlist.pop(index)
+            writeJData(playlist)
+            PL_embed = discord.Embed(title="刪除成功! 目前待播歌曲" , color=0xffd700)
+            if isinstance(playlist, list) and not playlist:
+                msg = ["\n我們的感情就像這個歌單一樣 沒有任何聯繫 渣男😾","\n放棄本來就會遺憾 但有些事堅持本就沒什麼意義 一定要擁有嗎 或許失去更輕鬆嘛 你先快樂 我的事以後再說😼"]
+                PL_embed.add_field(name="被你刪光了", value=f"{msg[random.randint(0,1)]}", inline=True)
+                await interaction.followup.send(embed=PL_embed)
                 return
         
         Number = 1
@@ -277,6 +291,26 @@ class Play(commands.Cog):
 
         await interaction.followup.send(embed=PL_embed)
 
+    @playlist.autocomplete("delete")
+    @playlist.autocomplete("interrupting")
+    async def text_autocomplete(self, interaction, current:str):
+        # 根據用戶輸入進行模糊搜尋（不區分大小寫）
+        playlist = openJData()
+        matching_options = [option["Title"] for option in playlist if current.lower() in option["Title"].lower()]
+        # 返回最多 25 個結果
+        return [discord.app_commands.Choice(name=option, value=option) for option in matching_options[:25]]
+
+async def matchPlaylist(interaction, playlist, text):
+    matching_options = [option["Title"] for option in playlist if text.lower() in option["Title"].lower()]
+    
+    if text not in matching_options:
+        await interaction.followup.send("喵喵 我找不到這首歌")
+        return "bad"
+    
+    target_title = text
+    for i, item in enumerate(playlist):
+        if item["Title"] == target_title:
+            return i
 
 async def pause(interaction, client):
     try:                                                                        #try是為了偵測Bot是否在語音頻道中
@@ -288,6 +322,7 @@ async def pause(interaction, client):
             return 1
 
     except Exception as e:
+        print('捕捉錯誤資訊: '+ str(e))
         return 3
 
 async def resume(interaction, client):
@@ -304,6 +339,7 @@ async def resume(interaction, client):
             return 1
         
     except Exception as e:
+        print('捕捉錯誤資訊: '+ str(e))
         return 3
 
 async def next(interaction, client):
@@ -318,21 +354,21 @@ async def next(interaction, client):
             return 0
         
     except Exception as e:
+        print('捕捉錯誤資訊: '+ str(e))
         return 3
 
-async def Videoplay(interaction, client):
+async def Videoplay(interaction, client, view):
     playlist = openJData()
     global playing_embed, pause_embed, ydl_embed
     if isinstance(playlist, list) and not playlist:
-        print("PlayList is empty")
+        print("PlayList is empty\n")
     else:
-        print("Play song from playlist")
         SongData = playlist.pop(0)
 
         writeJData(playlist)
 
         voice = get(client.voice_clients, guild=interaction.guild)
-        voice.play(FFmpegPCMAudio(SongData["URL"], **FFMPEG_OPTIONS), after=lambda e: client.loop.create_task(Videoplay(interaction, client)))
+        voice.play(FFmpegPCMAudio(SongData["URL"], **FFMPEG_OPTIONS), after=lambda e: client.loop.create_task(Videoplay(interaction, client, view)))
         voice.is_playing()
 
         SongData['Title'] = SongData['Title'].replace('*', '\*')
@@ -344,9 +380,15 @@ async def Videoplay(interaction, client):
         try:
             await ydl_embed.edit(embed=playing_embed)
         except Exception as e:
-            await interaction.channel.purge(limit=2)
-            ydl_embed = await interaction.channel.send(embed=playing_embed)
-            await interaction.channel.send(view=view)
+            ydl_embed = await interaction.channel.send(embed=playing_embed, view=view)
+        
+async def on_tree_error(interaction, error):
+    if isinstance(error, app_commands.CommandOnCooldown): 
+        return await interaction.response.send_message(f"Command is currently on cooldown! Try again in **{error.retry_after:.2f}** seconds!")
+    elif isinstance(error, app_commands.MissingPermissions):
+        return await interaction.response.send_message(f"You're missing permissions to use that")
+    else:
+        raise error
 
 async def setup(bot):
     await bot.add_cog(Play(bot))
